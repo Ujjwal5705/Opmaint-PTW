@@ -1,0 +1,170 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  REQUESTER
+  AREA_OWNER
+  SAFETY_OFFICER
+  ADMIN
+}
+
+enum PermitType {
+  HOT_WORK
+  CONFINED_SPACE
+  WORKING_AT_HEIGHT
+  ELECTRICAL_ISOLATION
+}
+
+enum PermitStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  ACTIVE
+  SUSPENDED
+  EXPIRED
+  REJECTED
+  CLOSED
+  CLOSED_VERIFIED
+  CANCELLED
+}
+
+enum ApprovalDecision {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role
+  // Only meaningful when role = AREA_OWNER: which area they can approve for.
+  ownedAreaId  String?
+  ownedArea    Area?    @relation("AreaOwner", fields: [ownedAreaId], references: [id])
+  createdAt    DateTime @default(now())
+
+  permitsRequested Permit[]   @relation("Requester")
+  approvals        Approval[]
+  auditLogs        AuditLog[]
+}
+
+model Plant {
+  id        String   @id @default(cuid())
+  name      String
+  areas     Area[]
+  createdAt DateTime @default(now())
+}
+
+model Area {
+  id        String      @id @default(cuid())
+  name      String
+  plantId   String
+  plant     Plant       @relation(fields: [plantId], references: [id])
+  equipment Equipment[]
+  owners    User[]      @relation("AreaOwner")
+  permits   Permit[]
+  createdAt DateTime    @default(now())
+}
+
+model Equipment {
+  id        String   @id @default(cuid())
+  tag       String   @unique
+  name      String
+  areaId    String
+  area      Area     @relation(fields: [areaId], references: [id])
+  permits   Permit[]
+  createdAt DateTime @default(now())
+}
+
+model Permit {
+  id     String       @id @default(cuid())
+  type   PermitType
+  status PermitStatus @default(DRAFT)
+
+  // --- shared fields, every permit type has these ---
+  requesterId     String
+  requester       User      @relation("Requester", fields: [requesterId], references: [id])
+  contractorName  String
+  workDescription String
+  areaId          String
+  area            Area      @relation(fields: [areaId], references: [id])
+  equipmentId     String
+  equipment       Equipment @relation(fields: [equipmentId], references: [id])
+  plannedStart    DateTime
+  plannedEnd      DateTime
+  hazards         String[] // e.g. ["flammable vapour", "confined space"]
+  ppeRequired     String[] // e.g. ["fire retardant suit", "SCBA"]
+  precautions     String[] // checklist items, e.g. ["isolate line", "fire watch present"]
+
+  // --- type-specific fields live here, validated in app code, not the DB ---
+  // Shape depends on `type`. See lib/permitTypes.ts for the Zod schema per type.
+  typeData Json
+
+  // --- lifecycle timestamps ---
+  submittedAt DateTime?
+  approvedAt  DateTime?
+  activatedAt DateTime?
+  suspendedAt DateTime?
+  expiredAt   DateTime?
+  closedAt    DateTime?
+  verifiedAt  DateTime?
+  cancelledAt DateTime?
+
+  // --- closure ---
+  completionNotes   String?
+  verificationNotes String?
+
+  // --- extension tracking (bonus feature) ---
+  extensionHours    Int @default(0) // total hours granted via extensions so far
+  extensionCapHours Int @default(4) // max total extension allowed
+
+  approvals Approval[]
+  auditLogs AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// One row per required approver for a given permit.
+// Both Area Owner and Safety Officer approvals are required before ACTIVE.
+model Approval {
+  id         String           @id @default(cuid())
+  permitId   String
+  permit     Permit           @relation(fields: [permitId], references: [id])
+  approverId String
+  approver   User             @relation(fields: [approverId], references: [id])
+  role       Role // which role this approval slot is "for" (AREA_OWNER or SAFETY_OFFICER)
+  decision   ApprovalDecision @default(PENDING)
+  comment    String?
+  decidedAt  DateTime?
+  createdAt  DateTime         @default(now())
+
+  @@unique([permitId, role]) // one approval slot per role per permit
+}
+
+// Immutable audit trail. Never updated or deleted after insert.
+model AuditLog {
+  id        String   @id @default(cuid())
+  permitId  String
+  permit    Permit   @relation(fields: [permitId], references: [id])
+  actorId   String
+  actor     User     @relation(fields: [actorId], references: [id])
+  action    String // e.g. "SUBMIT", "APPROVE", "REJECT", "ACTIVATE", "SUSPEND", "EDIT_FIELD"
+  fromValue String? // e.g. previous status, or previous field value
+  toValue   String?
+  comment   String?
+  createdAt DateTime @default(now())
+}
