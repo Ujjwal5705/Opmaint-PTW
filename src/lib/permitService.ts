@@ -15,6 +15,7 @@ import {
 import {
   ForbiddenError,
   InvalidTransitionError,
+  ValidationError,
   NotFoundError,
 } from "@/lib/errors";
 import { permitTypeSchemas, type PermitTypeKey } from "@/lib/permitTypes";
@@ -67,7 +68,7 @@ export async function createPermit(
   const schema = permitTypeSchemas[input.type as PermitTypeKey];
   const parsed = schema.safeParse(input.typeData);
   if (!parsed.success) {
-    throw new InvalidTransitionError(
+    throw new ValidationError(
       `Invalid data for permit type ${input.type}: ${parsed.error.issues.map((i) => i.message).join(", ")}`,
     );
   }
