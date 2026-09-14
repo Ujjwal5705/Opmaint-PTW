@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "test": "vitest run",
+    "postinstall": "prisma generate",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
